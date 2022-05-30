@@ -135,7 +135,8 @@ defmodule Avrora.Encoder do
   def encode(payload, schema_name: schema_name) when is_map(payload),
     do: encode(payload, schema_name: schema_name, format: :guess)
 
-  def encode(payload, schema_name: schema_name, format: format) when is_map(payload) do
+  def encode(payload, schema_name: schema_name, format: format)
+      when is_map(payload) or is_list(payload) do
     with {:ok, schema_name} <- Name.parse(schema_name) do
       if format == :plain do
         Logger.warn(

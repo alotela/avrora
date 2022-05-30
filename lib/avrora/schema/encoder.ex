@@ -21,18 +21,19 @@ defmodule Avrora.Schema.Encoder do
       "io.confluent.Payment"
   """
   @spec from_json(String.t(), reference_lookup_fun) :: {:ok, Schema.t()} | {:error, term()}
-  def from_json(payload, reference_lookup_fun \\ @reference_lookup_fun) when is_binary(payload) do
+  def from_json(payload, key, reference_lookup_fun \\ @reference_lookup_fun)
+      when is_binary(payload) do
     lookup_table = ets().new()
 
-    with {:ok, [schema | _]} <- parse_recursive(payload, lookup_table, reference_lookup_fun),
+    with {:ok, [schema | _]} <- parse_recursive(payload, lookup_table, reference_lookup_fun, key),
          {:ok, full_name} <- extract_full_name(schema),
-         {:ok, schema} <- do_compile(full_name, lookup_table) do
+         {:ok, schema} <- do_compile(full_name || key, lookup_table) do
       {
         :ok,
         %Schema{
           id: nil,
           version: nil,
-          full_name: full_name,
+          full_name: full_name || key,
           lookup_table: lookup_table,
           json: to_json(schema)
         }
@@ -112,11 +113,19 @@ defmodule Avrora.Schema.Encoder do
 
   defp to_json(schema), do: :avro_json_encoder.encode_type(schema)
 
-  defp parse_recursive(payload, lookup_table, reference_lookup_fun) do
+  defp parse_recursive(payload, lookup_table, reference_lookup_fun, key) do
     with {:ok, schema} <- do_parse(payload),
-         {:ok, _} <- extract_full_name(schema),
+         {:ok, extracted_name} <- extract_full_name(schema),
          {:ok, references} <- ReferenceCollector.collect(schema),
-         lookup_table <- :avro_schema_store.add_type(schema, lookup_table) do
+         lookup_table <-
+           :avro_schema_store.add_type(
+             case extracted_name do
+               nil -> key
+               _ -> :undefined
+             end,
+             schema,
+             lookup_table
+           ) do
       payloads =
         references
         |> Enum.reject(&:avro_schema_store.lookup_type(&1, lookup_table))
@@ -126,7 +135,7 @@ defmodule Avrora.Schema.Encoder do
 
       schemas =
         Enum.flat_map(payloads, fn payload ->
-          payload |> parse_recursive(lookup_table, reference_lookup_fun) |> unwrap!()
+          payload |> parse_recursive(lookup_table, reference_lookup_fun, key) |> unwrap!()
         end)
 
       {:ok, [schema | schemas]}
@@ -143,6 +152,8 @@ defmodule Avrora.Schema.Encoder do
       {:avro_fixed_type, _, _, _, _, full_name, _} -> {:ok, full_name}
       {:avro_enum_type, _, _, _, _, _, full_name, _} -> {:ok, full_name}
       {:avro_record_type, _, _, _, _, _, full_name, _} -> {:ok, full_name}
+      {:avro_array_type, _, _} -> {:ok, nil}
+      {:avro_union_type, _, _} -> {:ok, nil}
       _ -> {:error, :unnamed_type}
     end
   end

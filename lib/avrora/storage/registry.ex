@@ -39,7 +39,8 @@ defmodule Avrora.Storage.Registry do
          {:ok, version} <- Map.fetch(response, "version"),
          {:ok, schema} <- Map.fetch(response, "schema"),
          {:ok, references} <- extract_references(response),
-         {:ok, schema} <- SchemaEncoder.from_json(schema, make_reference_lookup_fun(references)) do
+         {:ok, schema} <-
+           SchemaEncoder.from_json(schema, key, make_reference_lookup_fun(references)) do
       Logger.debug("obtaining schema `#{schema_name.name}` with version `#{version}`")
 
       {:ok, %{schema | id: id, version: version}}
@@ -48,9 +49,16 @@ defmodule Avrora.Storage.Registry do
 
   def get(key) when is_integer(key) do
     with {:ok, response} <- http_client_get("schemas/ids/#{key}"),
+         {:ok, [%{"subject" => schema_registry_subject, "version" => _version} | _]} <-
+           http_client_get("schemas/ids/#{key}/versions"),
          {:ok, schema} <- Map.fetch(response, "schema"),
          {:ok, references} <- extract_references(response),
-         {:ok, schema} <- SchemaEncoder.from_json(schema, make_reference_lookup_fun(references)) do
+         {:ok, schema} <-
+           SchemaEncoder.from_json(
+             schema,
+             schema_registry_subject,
+             make_reference_lookup_fun(references)
+           ) do
       Logger.debug("obtaining schema with global id `#{key}`")
 
       {:ok, %{schema | id: key}}
@@ -71,7 +79,7 @@ defmodule Avrora.Storage.Registry do
     with {:ok, schema_name} <- Name.parse(key),
          {:ok, response} <- http_client_post("subjects/#{schema_name.name}/versions", value),
          {:ok, id} <- Map.fetch(response, "id"),
-         {:ok, schema} <- SchemaEncoder.from_json(value) do
+         {:ok, schema} <- SchemaEncoder.from_json(value, key) do
       unless is_nil(schema_name.version) do
         Logger.warn(
           "storing schema with version is not allowed, `#{schema_name.name}` used instead"
